@@ -20,11 +20,12 @@ class NumpyDataset(Dataset):
         try:
             # Load data from .npy files
             input_field = np.fromfile(self.data_dir / f"{self.image_ids[idx]:04}" / "segmented.raw", dtype=np.uint8).reshape((self.image_size[0], self.image_size[1], self.image_size[2], 1))
-            
+            input_field = input_field[:100, :100, :100, :]
             # TODO: Add linear trend to input field
             
             # Potential Fields
             phi = np.fromfile(self.data_dir / f"{self.image_ids[idx]:04}" / "elecpot.raw", dtype=np.float32).reshape((1, self.image_size[0], self.image_size[1], self.image_size[2]))
+            phi = phi[:, :100, :100, :100]
 
         except FileNotFoundError as e:
             raise FileNotFoundError(f"File {e} not found.")
