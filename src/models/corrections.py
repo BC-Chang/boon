@@ -242,10 +242,10 @@ class dirkernelcorrection3d(gaussian_elim_layer3d):
 
         T = self.gauss_elimination(x)
 
-        T[:, :, 0, :, :] = left['val']
-        T[:, :, -1, :, :] = right['val']
-        T[:, :, :, 0, :] = top['val']
-        T[:, :, :, -1, :] = down['val']
+        T[:, :, 0, :, :] = left['val'] if left['val'] is not None else T[:, :, 0, :, :]
+        T[:, :, -1, :, :] = right['val'] if right['val'] is not None else T[:, :, -1, :, :]
+        T[:, :, :, 0, :] = top['val'] if top['val'] is not None else T[:, :, :, 0, :]
+        T[:, :, :, -1, :] = down['val'] if down['val'] is not None else T[:, :, :, -1, :]
 
         return T
 

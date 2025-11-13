@@ -62,10 +62,14 @@ class BOON_FNO3d(BOON_3d):
         bdy_down_padded = bdy_down.copy()
 
         if self.bdy_type != 'periodic':
-            bdy_left_padded['val'] = F.pad(bdy_left['val'], [0, self.padding])
-            bdy_right_padded['val'] = F.pad(bdy_right['val'], [0, self.padding])
-            bdy_top_padded['val'] = F.pad(bdy_top['val'], [0, self.padding])
-            bdy_down_padded['val'] = F.pad(bdy_down['val'], [0, self.padding])
+            if bdy_left_padded is not None:
+                bdy_left_padded['val'] = F.pad(bdy_left['val'], [0, self.padding])
+            if bdy_right_padded is not None:
+                bdy_right_padded['val'] = F.pad(bdy_right['val'], [0, self.padding])
+            if bdy_top_padded is not None:
+                bdy_top_padded['val'] = F.pad(bdy_top['val'], [0, self.padding])
+            if bdy_down_padded is not None:
+                bdy_down_padded['val'] = F.pad(bdy_down['val'], [0, self.padding])
 
         
         x = torch.cat((x, grid), dim=-1)     
