@@ -3,7 +3,7 @@ import torch
 import torch.nn.functional as F
 from torch.optim import Adam
 from torch.optim.lr_scheduler import CosineAnnealingLR, ReduceLROnPlateau
-from BOON_3d import BOON_FNO3d
+from ..multi_step.BOON_3d import BOON_FNO3d
 from ..base.FNO3d import FNO3d
 
 class BOON3D(pl.LightningModule):
@@ -19,27 +19,29 @@ class BOON3D(pl.LightningModule):
         lr=1e-3,
         num_layers=4
     ):
-        super(BOON_FNO3d, self).__init__()
+        super(BOON3D, self).__init__()
         
         self.save_hyperparameters()
         
         self.net_name = net_name
         self.lr = lr
         self.fno = FNO3d(
-            in_channels=in_channels,
-            out_channels=out_channels,
+            #in_channels=in_channels,
+            #out_channels=out_channels,
             modes1=modes1,
             modes2=modes2,
             modes3=modes3,
             width=width,
-            num_layers=num_layers
+            lb=0,
+            ub=256,
+            #num_layers=num_layers
         )
         
         self.model = BOON_FNO3d(
             width = width,
             base_no = self.fno,
-            lb = 1,
-            ub = 2,
+            lb = 0,
+            ub = 256,
             bdy_type = 'dirichlet'
         )
         
@@ -50,14 +52,27 @@ class BOON3D(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         x, y = batch
         bs, nx, ny, nz, _ = x.shape
+        #bdy_left  = x[:, 0, :, :, :].reshape(bs, 1, ny, nz)
+        #bdy_right = x[:,-1, :, :, :].reshape(bs, 1, ny, nz)
+        #bdy_top = x[:, :, 0, :, :].reshape(bs, 1, nx, nz)
+        #bdy_down = x[:, :, -1, :, :].reshape(bs, 1, nx, nz)
+
         bdy_left  = y[:, :, 0, :, :].reshape(bs, 1, ny, nz)
         bdy_right = y[:,:, -1, :, :].reshape(bs, 1, ny, nz)
-        yhat = self(x, bc_left={'val': bdy_left}, bc_right={'val': bdy_right})
-        
+        bdy_top = y[:, :, :, 0, :].reshape(bs, 1, nx, nz)
+        bdy_down = y[:, :, :, -1, :].reshape(bs, 1, nx, nz)
+        yhat = self(x, bc_left={'val': bdy_left}, bc_right={'val': bdy_right}, bc_top={'val': bdy_top}, bc_bottom={'val': bdy_down})
         # TODO: Mask the grains
+        #mask = (x != 0).to(yhat.dtype)
+        #yhat = yhat * mask
         
         loss = 0
-        loss = F.mse_loss(y.view((1, -1)), yhat.view((1, -1)))
+        loss = F.mse_loss(y.view((1, -1)), yhat.view((1, -1)), reduction='none')
+        mask = (x != 0).to(yhat.dtype).reshape((1, -1))
+        weighted_loss = loss * mask
+        active = mask.sum()
+        loss = weighted_loss.sum() / torch.clamp(active, min=1.0)
+        
 
         self.log(
             "train_loss", loss, on_step=False, on_epoch=True, logger=True, rank_zero_only=True
@@ -68,12 +83,26 @@ class BOON3D(pl.LightningModule):
     def validation_step(self, batch, batch_idx):
         x, y = batch
         bs, nx, ny, nz, _ = x.shape
+        #bdy_left  = x[:, 0, :, :, :].reshape(bs, 1, ny, nz)
+        #bdy_right = x[:,-1, :, :, :].reshape(bs, 1, ny, nz)
+        #bdy_top = x[:, :, 0, :, :].reshape(bs, 1, nx, nz)
+        #bdy_down = x[:, :, -1, :, :].reshape(bs, 1, nx, nz)
+
         bdy_left  = y[:, :, 0, :, :].reshape(bs, 1, ny, nz)
         bdy_right = y[:,:, -1, :, :].reshape(bs, 1, ny, nz)
-        yhat = self(x, bc_left={'val': bdy_left}, bc_right={'val': bdy_right})
+        bdy_top = y[:, :, :, 0, :].reshape(bs, 1, nx, nz)
+        bdy_down = y[:, :, :, -1, :].reshape(bs, 1, nx, nz)
+        yhat = self(x, bc_left={'val': bdy_left}, bc_right={'val': bdy_right}, bc_top={'val': bdy_top}, bc_bottom={'val': bdy_down})
+        #mask = (x != 0).to(yhat.dtype)
+        #yhat = yhat * mask
 
         loss = 0
-        loss = F.mse_loss(y.view((1, -1)), yhat.view((1, -1)))
+        #loss = F.mse_loss(y.view((1, -1)), yhat.view((1, -1)))
+        loss = F.mse_loss(y.view((1, -1)), yhat.view((1, -1)), reduction='none')
+        mask = (x != 0).to(yhat.dtype).reshape((1, -1))
+        weighted_loss = loss * mask
+        active = mask.sum()
+        loss = weighted_loss.sum() / torch.clamp(active, min=1.0)
 
         self.log(
             "val_loss",
@@ -89,26 +118,31 @@ class BOON3D(pl.LightningModule):
     def test_step(self, batch, batch_idx):
         x, y = batch
         bs, nx, ny, nz, _ = x.shape
-        bdy_left  = y[:, :, 0, :, :].reshape(bs, 1, ny, nz)
-        bdy_right = y[:,:, -1, :, :].reshape(bs, 1, ny, nz)
-        yhat = self(x, bc_left={'val': bdy_left}, bc_right={'val': bdy_right})
+        bdy_left  = x[:, 0, :, :, :].reshape(bs, 1, ny, nz)
+        bdy_right = x[:,-1, :, :, :].reshape(bs, 1, ny, nz)
+        bdy_top = x[:, :, 0, :, :].reshape(bs, 1, nx, nz)
+        bdy_down = x[:, :, -1, :, :].reshape(bs, 1, nx, nz)
 
+
+        #bdy_left  = y[:, :, 0, :, :].reshape(bs, 1, ny, nz)
+        #bdy_right = y[:,:, -1, :, :].reshape(bs, 1, ny, nz)
+        #bdy_top = y[:, :, :, 0, :].reshape(bs, 1, nx, nz)
+        #bdy_down = y[:, :, :, -1, :].reshape(bs, 1, nx, nz)
+        yhat = self(x, bc_left={'val': bdy_left}, bc_right={'val': bdy_right}, bc_top={'val': bdy_top}, bc_bottom={'val': bdy_down})
+        #mask = (x != 0).to(yhat.dtype)
+        #yhat = yhat * mask
+        
 
         loss = 0
-        loss = F.mse_loss(y.view((1, -1)), yhat.view((1, -1)))
+        #loss = F.mse_loss(y.view((1, -1)), yhat.view((1, -1)))
+        loss = F.mse_loss(y.view((1, -1)), yhat.view((1, -1)), reduction='none')
+        mask = (x != 0).to(yhat.dtype).reshape((1, -1))
+        weighted_loss = loss * mask
+        active = mask.sum()
+        loss = weighted_loss.sum() / torch.clamp(active, min=1.0)
         #variance = y.detach().var(correction=0)
         #loss = loss / (variance.clamp_min(1e-6) + 1e-8)
-        eik_loss = 0.0
-        if self.beta_2 != 0:
-            self.b2 = self.linear_ramp(self.current_epoch, t0=300, ramp=30, w=self.beta_2)
-            eik_loss = self.b2 * self.eikonal_loss(yhat)
-        self.log(
-            "test_mse_loss", loss, on_step=False, on_epoch=True, logger=True, rank_zero_only=True
-        )
-        self.log(
-            "test_eik_loss", eik_loss, on_step=False, on_epoch=True, logger=True, rank_zero_only=True
-        )
-        loss = loss + eik_loss
+        
         self.log(
             "test_loss",
             loss,
@@ -125,22 +159,28 @@ class BOON3D(pl.LightningModule):
     def predict_step(self, batch, batch_idx):
         x, y = batch
         bs, nx, ny, nz, _ = x.shape
+        #bdy_left  = x[:, 0, :, :, :].reshape(bs, 1, ny, nz)
+        #bdy_right = x[:,-1, :, :, :].reshape(bs, 1, ny, nz)
+        #bdy_top = x[:, :, 0, :, :].reshape(bs, 1, nx, nz)
+        #bdy_down = x[:, :, -1, :, :].reshape(bs, 1, nx, nz)
+
+
         bdy_left  = y[:, :, 0, :, :].reshape(bs, 1, ny, nz)
         bdy_right = y[:,:, -1, :, :].reshape(bs, 1, ny, nz)
-        yhat = self(x, bc_left={'val': bdy_left}, bc_right={'val': bdy_right})
-        yhat = self(x)
-
-        loss = 0
-        loss = F.mse_loss(y.view((1, -1)), yhat.view((1, -1)))
-        #variance = y.detach().var(correction=0)
-        #loss = loss / (variance.clamp_min(1e-6) + 1e-8)
-        eik_loss = 0.0
-        if self.beta_2 != 0:
-            self.b2 = self.linear_ramp(self.current_epoch, t0=300, ramp=30, w=self.beta_2)
-            eik_loss = self.b2 * self.eikonal_loss(yhat)
-
-        loss = loss + eik_loss
+        bdy_top = y[:, :, :, 0, :].reshape(bs, 1, nx, nz)
+        bdy_down = y[:, :, :, -1, :].reshape(bs, 1, nx, nz)
+        yhat = self(x, bc_left={'val': bdy_left}, bc_right={'val': bdy_right}, bc_top={'val': bdy_top}, bc_bottom={'val': bdy_down})
+        #mask = (x != 0).to(yhat.dtype)
+        #yhat = yhat * mask
         
+        loss = 0
+        #loss = F.mse_loss(y.view((1, -1)), yhat.view((1, -1)))
+        loss = F.mse_loss(y.view((1, -1)), yhat.view((1, -1)), reduction='none')
+        mask = (x != 0).to(yhat.dtype).reshape((1, -1))
+        weighted_loss = loss * mask
+        active = mask.sum()
+        loss = weighted_loss.sum() / torch.clamp(active, min=1.0)
+                
         predictions = {
             "x": x,
             "y": y,

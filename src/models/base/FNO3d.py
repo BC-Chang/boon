@@ -10,7 +10,68 @@ import numpy as np
 ################################################################
 # 3d fourier layers
 ################################################################
+class SpectralConv3d(nn.Module):
+    def __init__(self, in_channels, out_channels, modes1, modes2, modes3):
+        super().__init__()
 
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.modes1 = modes1
+        self.modes2 = modes2
+        self.modes3 = modes3
+
+        self.scale = 1.0 / (in_channels * out_channels)
+
+        # Use REAL parameters for real/imag parts (no complex params!)
+        def init_parts():
+            shape = (in_channels, out_channels, self.modes1, self.modes2, self.modes3)
+            real = nn.Parameter(self.scale * torch.randn(*shape, dtype=torch.float32))
+            imag = nn.Parameter(self.scale * torch.randn(*shape, dtype=torch.float32))
+            return real, imag
+
+        self.w1_real, self.w1_imag = init_parts()
+        self.w2_real, self.w2_imag = init_parts()
+        self.w3_real, self.w3_imag = init_parts()
+        self.w4_real, self.w4_imag = init_parts()
+
+    def compl_mul3d(self, input, weights):
+        # (B, C_in, X, Y, F_T) x (C_in, C_out, X, Y, F_T) -> (B, C_out, X, Y, F_T)
+        return torch.einsum("bixyz,ioxyz->boxyz", input, weights)
+
+    def _complex_weights_fp32(self):
+        # Build complex64 weights from fp32 real/imag parts (inside autocast-disabled region)
+        w1 = torch.complex(self.w1_real.float(), self.w1_imag.float())
+        w2 = torch.complex(self.w2_real.float(), self.w2_imag.float())
+        w3 = torch.complex(self.w3_real.float(), self.w3_imag.float())
+        w4 = torch.complex(self.w4_real.float(), self.w4_imag.float())
+        return w1, w2, w3, w4
+
+    def forward(self, x):
+        B, C_in, X, Y, T = x.shape
+
+        # FFTs and complex ops in FP32 to avoid cuFFT FP16 restrictions
+        with torch.amp.autocast('cuda', enabled=False):
+            x32 = x.float()
+            x_ft = torch.fft.rfftn(x32, dim=(-3, -2, -1))  # complex64
+
+            out_ft = torch.zeros(B, self.out_channels, X, Y, T//2 + 1,
+                                 dtype=torch.complex64, device=x.device)
+
+            w1, w2, w3, w4 = self._complex_weights_fp32()
+
+            out_ft[:, :, :self.modes1, :self.modes2, :self.modes3] = \
+                self.compl_mul3d(x_ft[:, :, :self.modes1, :self.modes2, :self.modes3], w1)
+            out_ft[:, :, -self.modes1:, :self.modes2, :self.modes3] = \
+                self.compl_mul3d(x_ft[:, :, -self.modes1:, :self.modes2, :self.modes3], w2)
+            out_ft[:, :, :self.modes1, -self.modes2:, :self.modes3] = \
+                self.compl_mul3d(x_ft[:, :, :self.modes1, -self.modes2:, :self.modes3], w3)
+            out_ft[:, :, -self.modes1:, -self.modes2:, :self.modes3] = \
+                self.compl_mul3d(x_ft[:, :, -self.modes1:, -self.modes2:, :self.modes3], w4)
+
+            y32 = torch.fft.irfftn(out_ft, s=(X, Y, T))  # float32
+
+        return y32.to(dtype=x.dtype)
+'''
 class SpectralConv3d(nn.Module):
     def __init__(self, in_channels, out_channels, modes1, modes2, modes3):
         super(SpectralConv3d, self).__init__()
@@ -38,24 +99,28 @@ class SpectralConv3d(nn.Module):
 
     def forward(self, x):
         batchsize = x.shape[0]
-        #Compute Fourier coeffcients up to factor of e^(- something constant)
-        x_ft = torch.fft.rfftn(x, dim=[-3,-2,-1])
 
-        # Multiply relevant Fourier modes
-        out_ft = torch.zeros(batchsize, self.out_channels, x.size(-3), x.size(-2), x.size(-1)//2 + 1, dtype=torch.cfloat, device=x.device)
-        out_ft[:, :, :self.modes1, :self.modes2, :self.modes3] = \
-            self.compl_mul3d(x_ft[:, :, :self.modes1, :self.modes2, :self.modes3], self.weights1)
-        out_ft[:, :, -self.modes1:, :self.modes2, :self.modes3] = \
-            self.compl_mul3d(x_ft[:, :, -self.modes1:, :self.modes2, :self.modes3], self.weights2)
-        out_ft[:, :, :self.modes1, -self.modes2:, :self.modes3] = \
-            self.compl_mul3d(x_ft[:, :, :self.modes1, -self.modes2:, :self.modes3], self.weights3)
-        out_ft[:, :, -self.modes1:, -self.modes2:, :self.modes3] = \
-            self.compl_mul3d(x_ft[:, :, -self.modes1:, -self.modes2:, :self.modes3], self.weights4)
+        with torch.amp.autocast('cuda', enabled=False):
+            x32  = x.float()
+            #Compute Fourier coeffcients up to factor of e^(- something constant)
+            x_ft = torch.fft.rfftn(x32, dim=[-3,-2,-1])
 
-        #Return to physical space
-        x = torch.fft.irfftn(out_ft, s=(x.size(-3), x.size(-2), x.size(-1)))
-        return x
+            # Multiply relevant Fourier modes
+            out_ft = torch.zeros(batchsize, self.out_channels, x.size(-3), x.size(-2), x.size(-1)//2 + 1, dtype=torch.complex64, device=x.device)
+            out_ft[:, :, :self.modes1, :self.modes2, :self.modes3] = \
+                self.compl_mul3d(x_ft[:, :, :self.modes1, :self.modes2, :self.modes3], self.weights1)
+            out_ft[:, :, -self.modes1:, :self.modes2, :self.modes3] = \
+                self.compl_mul3d(x_ft[:, :, -self.modes1:, :self.modes2, :self.modes3], self.weights2)
+            out_ft[:, :, :self.modes1, -self.modes2:, :self.modes3] = \
+                self.compl_mul3d(x_ft[:, :, :self.modes1, -self.modes2:, :self.modes3], self.weights3)
+            out_ft[:, :, -self.modes1:, -self.modes2:, :self.modes3] = \
+                self.compl_mul3d(x_ft[:, :, -self.modes1:, -self.modes2:, :self.modes3], self.weights4)
 
+            #Return to physical space
+            y32 = torch.fft.irfftn(out_ft, s=(x.size(-3), x.size(-2), x.size(-1)))
+            
+        return y32.to(dtype=x.dtype)
+'''
 class FNO3d(nn.Module):
     def __init__(self, 
         modes1, 

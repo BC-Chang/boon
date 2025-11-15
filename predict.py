@@ -17,7 +17,7 @@ from timeit import default_timer
 from src.utils.utils import *
 from src.models.base import FNO3d
 from src.models.multi_step import BOON_FNO3d
-from models.lightning.BOON_3d import BOON3D
+from src.models.lightning.BOON_3d import BOON3D
 from dataloader import get_dataloader, split_indices
 import wandb
 from lightning.pytorch.loggers import WandbLogger
@@ -26,10 +26,10 @@ import json
 if __name__ == "__main__":
 
     # Preprocessing args
-    torch.set_float32_matmul_precision("high")
-    net_name = "BOON-FNOv0.0.1"
+    torch.set_float32_matmul_precision("medium")
+    net_name = "BOON_v0.0.10"
     
-    datapath = Path(r"C:\Users\bchan\Box\1001_datasets\elec_sims")
+    datapath = Path(r"/scratch/06898/bchang/elec_sims")
     model = BOON3D
     phase = "test"
     with open(f'lightning_logs/{net_name}/hparam_config.json', 'r') as f:
@@ -43,7 +43,7 @@ if __name__ == "__main__":
         image_size=(256, 256, 256),
         data_path=datapath,
         phase=phase,
-        num_workers=0,
+        num_workers=71,
         persistent_workers=False,
     )
     
@@ -76,14 +76,18 @@ if __name__ == "__main__":
     npy_path.mkdir(parents=True, exist_ok=True)
 
     for i, batch in enumerate(predictions):
-        x = batch["x"].cpu().numpy()[0, :, :, -1]
-        x = np.where(x <= 1, 1, np.nan)
+        x = batch["x"].cpu().numpy()[0, :, :, 128, 0]
         y = batch["y"][0]
         yhat = batch["yhat"][0]
 
+        np.savez(
+            npy_path / f"{str(hparams[f'{phase}_ids'][i]).split('.')[0]}_prediction",
+            x=batch["x"].cpu().numpy().squeeze(),
+            y=y.cpu().numpy().squeeze(),
+            yhat=yhat.cpu().numpy().squeeze())
         #np.save(npy_path / f"{str(hparams['test_ids'][i]).split['.'][0]}_t{j}_prediction", yhat)
         fig, ax = plt.subplots(1, 3)
-        y_plot = ax[1].imshow(y.cpu().numpy()[:, :, 128], cmap="inferno")
+        y_plot = ax[1].imshow(y.cpu().numpy()[0, :, :, 128], cmap="inferno")
         # ax[1].imshow(x, cmap="Grays_r")
         ax[1].set_title("Ground Truth")
         cmin, cmax = y_plot.get_clim()
@@ -96,8 +100,8 @@ if __name__ == "__main__":
         # ax[2].imshow(x, cmap="Grays_r")
         ax[2].set_title("Prediction")
         ax[2].axis(False)
-        ax[0].imshow(batch["x"].cpu().numpy()[0, :, :, -1], cmap="Grays_r")
-        # fig.colorbar(jhat_plot, fraction=0.046, pad=0.04)
+        ax[0].imshow(x, cmap="Grays_r")
+        fig.colorbar(yhat_plot, fraction=0.046, pad=0.04)
 
         fig.suptitle(f"Sample {hparams[f'{phase}_ids'][i]:04}")
         fig.savefig(

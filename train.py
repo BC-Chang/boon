@@ -17,22 +17,22 @@ from timeit import default_timer
 from src.utils.utils import *
 from src.models.base import FNO3d
 from src.models.multi_step import BOON_FNO3d
-from models.lightning.BOON_3d import BOON3D
+from src.models.lightning.BOON_3d import BOON3D
 from dataloader import get_dataloader, split_indices
 import wandb
 from lightning.pytorch.loggers import WandbLogger
 import json
 
+torch.set_float32_matmul_precision('medium')
+
 seed = 1758938
 torch.manual_seed(0)
 np.random.seed(0)
 
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-
 # Load data
-datapath = Path(r"C:\Users\bchan\Box\1001_datasets\elec_sims")  # Path("/scratch/06898/bchang/elec_sims")
+datapath = Path("/scratch/06898/bchang/elec_sims")  # Path(r"C:\Users\bchan\Box\1001_datasets\elec_sims")
 samples = np.array(list(datapath.glob("494*")))
-n_samples = 10  # len(samples)
+n_samples = 100  # len(samples)
 split = [0.6, 0.2, 0.2]
 assert len(split) == 3, "Split must be a list of three floats"
 assert sum(split) == 1, "Split must sum to 1"
@@ -46,16 +46,16 @@ test_ids = np.array([samples[image_ids[ids]].name for ids in test_ids])
 
 
 hparams = {
-    'net_name': "BOON_v0.0.1",
-    'learning_rate': 5e-4,
+    'net_name': "BOON_v0.0.10",
+    'learning_rate': 1e-3,
     'batch_size': 5,
-    'epochs': 1000,
+    'epochs': 300,
     'val_interval': 10,
-    'modes1': 20,
-    'modes2': 20,
+    'modes1': 8,
+    'modes2': 8,
     'modes3': 8,
-    'width': 40,
-    'num_layers': 4,
+    'width': 20,
+    'num_layers': 3,
     'beta_1': 1,
     'beta_2': 0,
     'n_samples': n_samples,
@@ -65,7 +65,7 @@ hparams = {
     'train_ids': [str(train_id) for train_id in train_ids],
     'val_ids': [str(val_id) for val_id in val_ids],
     'test_ids': [str(test_id) for test_id in test_ids],
-    'patience': 10
+    'patience': 30
 }
 wandb.init(project="BOON-FNO", name=hparams['net_name'],
             config=hparams, save_code=True, id=hparams['net_name'])
@@ -79,8 +79,8 @@ train_dataloader = get_dataloader(
     image_size=(256, 256, 256),
     data_path=datapath,
     phase='train',
-    num_workers=0,
-    persistent_workers=False,
+    num_workers=71,
+#    persistent_workers=False,
 )
 
 val_dataloader = get_dataloader(
@@ -88,8 +88,8 @@ val_dataloader = get_dataloader(
     image_size=(256, 256, 256),
     data_path=datapath,
     phase='val',
-    num_workers=0,
-    persistent_workers=False,
+    num_workers=71,
+#    persistent_workers=False,
 )
 
 try:
@@ -146,6 +146,7 @@ trainer = pl.Trainer(
     check_val_every_n_epoch=hparams['val_interval'],
     log_every_n_steps=hparams['n_train'],
     logger=logger,
+    precision="bf16-mixed",
 )
 
 trainer.fit(model, train_dataloader, val_dataloader)

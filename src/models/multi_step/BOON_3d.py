@@ -52,7 +52,9 @@ class BOON_FNO3d(BOON_3d):
                     bdy_right=DEFAULT_BDY,
                     bdy_top=DEFAULT_BDY,
                     bdy_down=DEFAULT_BDY,):
-        
+
+        mask = x.detach().clone()
+        mask = (mask != 0).to(x.dtype)
         non_bdy_x, non_bdy_y = self.get_non_bdy(x, bdy_left, bdy_right, bdy_top, bdy_down)
         grid = self.get_grid(x.shape, x.device)
 
@@ -116,4 +118,6 @@ class BOON_FNO3d(BOON_3d):
         x = self.fc2(x)
         x = self.strict_enforce_bdy(x, bdy_left, bdy_right, bdy_top, bdy_down)
 
+        # Add grain mask
+        x = x * mask
         return x

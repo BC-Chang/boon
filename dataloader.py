@@ -19,13 +19,17 @@ class NumpyDataset(Dataset):
     def __getitem__(self, idx):
         try:
             # Load data from .npy files
-            input_field = np.fromfile(self.data_dir / f"{self.image_ids[idx]:04}" / "segmented.raw", dtype=np.uint8).reshape((self.image_size[0], self.image_size[1], self.image_size[2], 1))
-            input_field = input_field[:100, :100, :100, :]
-            # TODO: Add linear trend to input field
+            input_field = np.fromfile(self.data_dir / f"{self.image_ids[idx]:04}" / "segmented.raw", dtype=np.uint8).reshape((self.image_size[0], self.image_size[1], self.image_size[2]))
+            input_field[1:-1, 0, :] = 0
+            input_field[1:-1, -1, :] = 0
+            input_field[1:-1, :, 0] = 0
+            input_field[1:-1, :, -1] = 0
+            
+            input_field = self.linear_trend(input_field).reshape((self.image_size[0], self.image_size[1], self.image_size[2], 1))
             
             # Potential Fields
             phi = np.fromfile(self.data_dir / f"{self.image_ids[idx]:04}" / "elecpot.raw", dtype=np.float32).reshape((1, self.image_size[0], self.image_size[1], self.image_size[2]))
-            phi = phi[:, :100, :100, :100]
+            #phi = phi[:, :100, :100, :100]
 
         except FileNotFoundError as e:
             raise FileNotFoundError(f"File {e} not found.")
@@ -44,6 +48,20 @@ class NumpyDataset(Dataset):
         """
         return (x - np.amin(x)) / (np.amax(x) - np.amin(x))
 
+    def linear_trend(self, image, inlet=2, outlet=1):
+        """
+        Create a linear trend through the pore space based on Digital Rock Suite BCs
+        """
+        # Make mask
+        binary_mask = (image != 0).astype(np.uint8)
+        trend = np.linspace(inlet - 1 / image.shape[0], outlet - 1 / image.shape[0], image.shape[0])
+        trend = np.broadcast_to(trend, image.shape)
+
+        # Mask grains
+        trended_img = trend * binary_mask
+
+        return trended_img
+        
 def get_dataloader(
     image_ids,
     data_path,
